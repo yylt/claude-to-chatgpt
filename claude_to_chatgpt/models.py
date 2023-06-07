@@ -24,10 +24,10 @@ models_list = [
         "parent": None,
     },
     {
-        "id": "gpt-3.5-turbo-0301",
+        "id": "claude-slack",
         "object": "model",
         "created": 1677649963,
-        "owned_by": "openai",
+        "owned_by": "oenai",
         "permission": [
             {
                 "id": "modelperm-tsdKKNwiNtHfnKWWTkKChjoo",
@@ -44,7 +44,7 @@ models_list = [
                 "is_blocking": False,
             }
         ],
-        "root": "gpt-3.5-turbo-0301",
+        "root": "claude-slack",
         "parent": None,
     },
     {

@@ -1,7 +1,10 @@
+# -*- coding:utf-8 -*- 
 import httpx
+import requests
 import time
 import json
 import os
+import uuid
 from fastapi import Request
 from claude_to_chatgpt.util import num_tokens_from_string
 from claude_to_chatgpt.logger import logger
@@ -20,8 +23,8 @@ stop_reason_map = {
 
 
 class ClaudeAdapter:
-    def __init__(self, claude_base_url="https://api.anthropic.com"):
-        self.claude_api_key = os.getenv("CLAUDE_API_KEY", None)
+    def __init__(self,claude_api_key="", claude_base_url="https://api.anthropic.com"):
+        self.claude_api_key = claude_api_key
         self.claude_base_url = claude_base_url
 
     def get_api_key(self, headers):
@@ -183,3 +186,121 @@ class ClaudeAdapter:
                                     logger.debug(
                                         f"Failed to decode line: {stripped_line}"
                                     )  # Debug output
+
+class ClaudeSlackAdapter:
+    def __init__(self, channelid="",access_token="",claude_slack_url=""):
+        self.channel_id = channelid
+        self.access_token = access_token
+        self.claude_base_url = claude_slack_url
+
+    def convert_messages_to_prompt(self, messages):
+        return messages[len(messages)-1]["content"]
+
+    def openai_to_claude_params(self, openai_params):
+        model = model_map.get(openai_params["model"], "claude-v1.3-100k")
+        messages = openai_params["messages"]
+
+        prompt = self.convert_messages_to_prompt(messages)
+
+        claude_params = {
+            "action": "next",
+            "messages": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "role": "user",
+                    "author": {
+                        "role": "user"
+                    },
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            prompt
+                        ]
+                    }
+                }
+            ],
+            "parent_message_id": str(uuid.uuid4()),
+            "model": model,
+        }
+        if openai_params.get("stream"):
+            claude_params["stream"] = True
+        return claude_params
+
+    
+    def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
+        content = decoded_line.removeprefix(prev_decoded_line)
+        length = len(content)
+        return  {
+            "id": f"chatcmpl-{str(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": length,
+                "total_tokens": length,
+            },
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "index": 0,
+                }
+            ],
+        }
+    
+    def claude_to_chatgpt_response(self, claude_response, stream=False, model="gpt-3.5-turbo"):
+        prev_decoded_line = ""
+        for line in claude_response.iter_lines():
+            if not line or line is None:
+                continue
+            if line.find(b'[DONE]') >0:
+                if stream is False:
+                    try:
+                        json_line = json.loads(stripped_line)
+                        decoded_line = json_line["message"]["content"]["parts"][0]
+                        # yield decoded_line
+                        yield (self.chatgpt_response(decoded_line, "",model))
+                    except json.JSONDecodeError as e:
+                        logger.info(
+                            f"Error decoding JSON: {e}"
+                        ) 
+                yield "[DONE]"
+                break
+            
+            stripped_line = line.removeprefix(b'data: ')
+            if stream is False:
+                continue
+            try:
+                json_line = json.loads(stripped_line)
+                decoded_line = json_line["message"]["content"]["parts"][0]
+                # yield decoded_line
+                openai_response = (self.chatgpt_response(decoded_line, prev_decoded_line,model))
+                prev_decoded_line = decoded_line
+                yield openai_response
+            except json.JSONDecodeError as e:
+                logger.info(
+                    f"Error decoding JSON: {e}"
+                ) 
+
+    async def chat(self, request: Request):
+        openai_params = await request.json()
+        claude_params = self.openai_to_claude_params(openai_params)
+
+        response = requests.post(
+                f"{self.claude_base_url}/backend-api/conversation",
+                headers={
+                    'Authorization': f'Bearer {self.channel_id}@{self.access_token}',
+                    "content-type": "application/json",
+                },
+                json=claude_params,
+                timeout=60,
+            )
+        response.raise_for_status()
+        resp = self.claude_to_chatgpt_response(response,
+                                              openai_params.get("stream", False),
+                                              openai_params.get("model"))
+        yield resp
+        
