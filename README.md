@@ -27,6 +27,9 @@ This project converts the API of Anthropic's Claude model to the OpenAI Chat API
 * 🐻 Support `claude-v1.3`, `claude-v1.3-100k` models
 * 🌩️ Deploy by Cloudflare Workers or Docker
 
+## install slack app
+- [install slack bot](./install-app.md)
+
 ## Getting Started
 
 You can run this project using Cloudflare Workers or Docker:
