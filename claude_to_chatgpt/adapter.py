@@ -9,6 +9,7 @@ from fastapi import Request
 from claude_to_chatgpt.util import num_tokens_from_string
 from claude_to_chatgpt.logger import logger
 from claude_to_chatgpt.models import model_map
+import poe 
 
 role_map = {
     "system": "Human",
@@ -304,3 +305,60 @@ class ClaudeSlackAdapter:
                                               openai_params.get("model"))
         yield resp
         
+
+class PoeAdapter:
+    def __init__(self, poe_token, proxy, model):
+        self.client = poe.Client(poe_token, proxy=proxy)
+        self.model = model
+
+    def convert_messages_to_prompt(self, messages):
+        return messages[len(messages)-1]["content"]
+
+    def openai_to_poe_params(self, openai_params):
+        messages = openai_params["messages"]
+        prompt = self.convert_messages_to_prompt(messages)
+
+        return prompt
+
+    def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
+        content = decoded_line.removeprefix(prev_decoded_line)
+        length = len(content)
+        return  {
+            "id": f"chatcmpl-{str(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": length,
+                "total_tokens": length,
+            },
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "index": 0,
+                }
+            ],
+        }
+    
+    def poe_to_chatgpt_response(self, response, stream=False, model="gpt-3.5-turbo"):
+        chunk = response.get("text_new", None)
+        if chunk is None:
+            yield "[DONE]"
+            return 
+        yield (self.chatgpt_response(chunk, "",model))
+        
+
+    async def chat(self, request: Request):
+        openai_params = await request.json()
+        prompt = self.openai_to_poe_params(openai_params)
+        for chunk in self.client.send_message(self.model, prompt, with_chat_break=False):
+            #print(chunk["text_new"], end="", flush=True)
+            resp = self.poe_to_chatgpt_response(chunk,
+                                                openai_params.get("stream", False),
+                                                openai_params.get("model"))
+            yield resp
+        yield "[DONE]"
