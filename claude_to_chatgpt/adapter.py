@@ -198,7 +198,7 @@ class ClaudeSlackAdapter:
         return messages[len(messages)-1]["content"]
 
     def openai_to_claude_params(self, openai_params):
-        model = model_map.get(openai_params["model"], "claude-v1.3-100k")
+        model = model_map.get(openai_params["model"], "gpt-3.5-turbo")
         messages = openai_params["messages"]
 
         prompt = self.convert_messages_to_prompt(messages)
@@ -223,21 +223,103 @@ class ClaudeSlackAdapter:
             "parent_message_id": str(uuid.uuid4()),
             "model": model,
         }
-        if openai_params.get("stream"):
-            claude_params["stream"] = True
+        claude_params["stream"] = openai_params.get("stream", True)
         return claude_params
 
     
+    def chatgpt_response(self, decoded_line, prev_decoded_line, model):
+        content = decoded_line.removeprefix(prev_decoded_line)
+        length = len(content)
+        t=time.time()
+        return  {
+            "id": f"chatcmpl-{str(t)}",
+            "object": "chat.completion",
+            "created": int(t),
+            "model": model,
+            "usage": {
+                "completion_tokens": length,
+                "total_tokens": length,
+            },
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "index": 0,
+                }
+            ],
+        }
+   
+    async def chat(self, request: Request):
+        openai_params = await request.json()
+        claude_params = self.openai_to_claude_params(openai_params)
+        try:
+            response = requests.post(
+                    f"{self.claude_base_url}/backend-api/conversation",
+                    headers={
+                        'Authorization': f'Bearer {self.channel_id}@{self.access_token}',
+                        "content-type": "application/json",
+                    },
+                    json=claude_params,
+                    timeout=30,
+                    stream=True,
+                )
+            response.raise_for_status()
+        except Exception as e:
+            print("exception: ",e)
+            yield ("[DONE]")
+            return
+
+        prev_decoded_line = ""
+        for line in response.iter_lines():
+            if not line or line is None:
+                continue
+            if line.startswith(b'event'):
+                continue
+            stripped_line = line.removeprefix(b'data: ')
+            if not stripped_line:
+                continue
+            if stripped_line.find(b'[DONE]')>-1:
+                yield ("[DONE]")
+                break
+            try:
+                json_line = json.loads(stripped_line)
+                decoded_line = json_line["message"]["content"]["parts"][0]
+                # yield decoded_line
+                openai_response = (self.chatgpt_response(decoded_line, prev_decoded_line, claude_params.get("model")))
+                prev_decoded_line = decoded_line
+                yield openai_response
+            except json.JSONDecodeError as e:
+                print(
+                    f"Error decoding JSON: {e}"
+                ) 
+
+class PoeAdapter:
+    def __init__(self, poe_token, proxy, model3, model4):
+        self.client = poe.Client(poe_token, proxy=proxy)
+        self.model3 = model3
+        self.model4 = model4
+
+    def convert_messages_to_prompt(self, messages):
+        return messages[len(messages)-1]["content"]
+
+    def openai_to_poe_params(self, openai_params):
+        messages = openai_params["messages"]
+        prompt = self.convert_messages_to_prompt(messages)
+
+        return prompt
+
     def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
         content = decoded_line.removeprefix(prev_decoded_line)
         length = len(content)
+        t = time.time()
         return  {
-            "id": f"chatcmpl-{str(time.time())}",
+            "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
-            "created": int(time.time()),
+            "created": int(t),
             "model": model,
             "usage": {
-                "prompt_tokens": 0,
                 "completion_tokens": length,
                 "total_tokens": length,
             },
@@ -252,62 +334,31 @@ class ClaudeSlackAdapter:
             ],
         }
     
-    def claude_to_chatgpt_response(self, claude_response, stream=False, model="gpt-3.5-turbo"):
-        prev_decoded_line = ""
-        for line in claude_response.iter_lines():
-            if not line or line is None:
-                continue
-            if line.find(b'[DONE]') >0:
-                if stream is False:
-                    try:
-                        json_line = json.loads(stripped_line)
-                        decoded_line = json_line["message"]["content"]["parts"][0]
-                        # yield decoded_line
-                        yield (self.chatgpt_response(decoded_line, "",model))
-                    except json.JSONDecodeError as e:
-                        logger.info(
-                            f"Error decoding JSON: {e}"
-                        ) 
-                yield "[DONE]"
-                break
-            
-            stripped_line = line.removeprefix(b'data: ')
-            if stream is False:
-                continue
-            try:
-                json_line = json.loads(stripped_line)
-                decoded_line = json_line["message"]["content"]["parts"][0]
-                # yield decoded_line
-                openai_response = (self.chatgpt_response(decoded_line, prev_decoded_line,model))
-                prev_decoded_line = decoded_line
-                yield openai_response
-            except json.JSONDecodeError as e:
-                logger.info(
-                    f"Error decoding JSON: {e}"
-                ) 
-
     async def chat(self, request: Request):
         openai_params = await request.json()
-        claude_params = self.openai_to_claude_params(openai_params)
+        prompt = self.openai_to_poe_params(openai_params)
+        if openai_params.get("stream", False) == False:
+            yield ("[DONE]")
+        omodel = openai_params.get("model", "gpt-3.5-turbo")
+        model = self.model3
+        if omodel.startswith("gpt-4"):
+            model =self.model4
+        try:
+            for resp in self.client.send_message(model, prompt, with_chat_break=True):
+                chunk = resp.get("text_new", None)
+                if chunk is None:
+                    yield ("[DONE]")
+                    return 
+                r = self.chatgpt_response(chunk, "", openai_params.get("model"))
+                yield ( r )
+            yield ("[DONE]")
+        except Exception:
+            yield ("[DONE]")
 
-        response = requests.post(
-                f"{self.claude_base_url}/backend-api/conversation",
-                headers={
-                    'Authorization': f'Bearer {self.channel_id}@{self.access_token}',
-                    "content-type": "application/json",
-                },
-                json=claude_params,
-                timeout=60,
-            )
-        response.raise_for_status()
-        resp = self.claude_to_chatgpt_response(response,
-                                              openai_params.get("stream", False),
-                                              openai_params.get("model"))
-        yield resp
-        
-
-class PoeAdapter:
-    def __init__(self, poe_token, proxy, model):
+class MerlinAdapter:
+    chat="chat/merlin-actions?customJWT=true"
+    status="status"
+    def __init__(self, merlinURL, users, passwords, googlekey):
         self.client = poe.Client(poe_token, proxy=proxy)
         self.model = model
 
@@ -323,13 +374,13 @@ class PoeAdapter:
     def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
         content = decoded_line.removeprefix(prev_decoded_line)
         length = len(content)
+        t = time.time()
         return  {
-            "id": f"chatcmpl-{str(time.time())}",
+            "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
-            "created": int(time.time()),
+            "created": int(t),
             "model": model,
             "usage": {
-                "prompt_tokens": 0,
                 "completion_tokens": length,
                 "total_tokens": length,
             },
@@ -344,21 +395,18 @@ class PoeAdapter:
             ],
         }
     
-    def poe_to_chatgpt_response(self, response, stream=False, model="gpt-3.5-turbo"):
-        chunk = response.get("text_new", None)
-        if chunk is None:
-            yield "[DONE]"
-            return 
-        yield (self.chatgpt_response(chunk, "",model))
-        
-
     async def chat(self, request: Request):
         openai_params = await request.json()
         prompt = self.openai_to_poe_params(openai_params)
-        for chunk in self.client.send_message(self.model, prompt, with_chat_break=False):
-            #print(chunk["text_new"], end="", flush=True)
-            resp = self.poe_to_chatgpt_response(chunk,
-                                                openai_params.get("stream", False),
-                                                openai_params.get("model"))
-            yield resp
-        yield "[DONE]"
+        if openai_params.get("stream", False)==False:
+            yield ("[DONE]")
+        for resp in self.client.send_message(self.model, prompt, with_chat_break=True):
+            chunk = resp.get("text_new", None)
+            if chunk is None:
+                yield ("[DONE]")
+                return 
+            r = self.chatgpt_response(chunk, "", openai_params.get("model"))
+            yield ( r )
+        yield ("[DONE]")
+
+

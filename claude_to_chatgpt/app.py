@@ -17,31 +17,33 @@ SLACK_ACCESS_TOKEN = os.getenv("SLACK_ACCESS_TOKEN", None)
 
 POE_TOKEN = os.getenv("POE_TOKEN", None)
 POE_PROXY = os.getenv("POE_PROXY", None)
-POE_MODEL = os.getenv("POE_MODEL", "chinchilla") 
+POE_GPT3_MODEL = os.getenv("POE_GPT3_MODEL", "chinchilla") 
+POE_GPT4_MODEL = os.getenv("POE_GPT4_MODEL", "a2") 
 """
 {
   "capybara": "Sage",
   "a2": "Claude-instant",
+  "chinchilla": "ChatGPT-3.5",
   "nutria": "Dragonfly",
   "a2_100k": "Claude-instant-100k",
   "beaver": "GPT-4",
-  "chinchilla": "ChatGPT-3.5",
   "a2_2": "Claude+"
 }
 """
 
-
+MODEL = os.getenv("MODEL", "poe")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 PORT = os.getenv("PORT", 8000)
 HOST = os.getenv("HOST", "0.0.0.0")
 
-apiadapter = ClaudeAdapter(CLAUDE_API_KEY, CLAUDE_BASE_URL)
-slackadapter = ClaudeSlackAdapter(SLACK_CHANNEL,SLACK_ACCESS_TOKEN,CLAUDE_SLACK_URL)
-poeadapter = PoeAdapter(POE_TOKEN, POE_PROXY, POE_MODEL)
-
 # default is poeadapter
-adapter = poeadapter
-
+if MODEL=="poe": 
+    adapter = PoeAdapter(POE_TOKEN, POE_PROXY, POE_GPT3_MODEL, POE_GPT4_MODEL)
+elif MODEL=="slack":
+    adapter = ClaudeSlackAdapter(SLACK_CHANNEL,SLACK_ACCESS_TOKEN,CLAUDE_SLACK_URL)
+else:
+    adapter =  ClaudeAdapter(CLAUDE_API_KEY, CLAUDE_BASE_URL)
+    
 app = FastAPI()
 
 # Add CORS middleware
@@ -60,13 +62,17 @@ app.add_middleware(
 )
 async def chat(request: Request):
     openai_params = await request.json()
-    
+    stream=openai_params.get("stream")
+    if stream is None:
+        openai_params["stream"]=True
     if openai_params.get("stream", False):
         async def generate():
             async for response in adapter.chat(request):
-                for resp in list(response):
-                    #print(resp)
-                    yield f"data: {json.dumps(resp)}\n\n"
+                #print("response: ",response)
+                if isinstance(response, str) and response.find("[DONE]")>-1:
+                    yield "data: [DONE]\n\n"
+                    break
+                yield f"data: {json.dumps(response)}\n\n"
         return StreamingResponse(generate(), media_type="text/event-stream")
     else:
         openai_response = None
@@ -83,5 +89,5 @@ async def models(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run("app:app", host=HOST, port=PORT, log_level=LOG_LEVEL)
