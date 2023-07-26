@@ -3,13 +3,13 @@ import httpx
 import requests
 import time
 import json
-import os
 import uuid
 from fastapi import Request
 from claude_to_chatgpt.util import num_tokens_from_string
 from claude_to_chatgpt.logger import logger
 from claude_to_chatgpt.models import model_map
 import poe 
+import claude
 
 role_map = {
     "system": "Human",
@@ -135,7 +135,7 @@ class ClaudeAdapter:
         claude_params = self.openai_to_claude_params(openai_params)
         api_key = self.get_api_key(headers)
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             if not claude_params.get("stream", False):
                 response = await client.post(
                     f"{self.claude_base_url}/v1/complete",
@@ -355,6 +355,70 @@ class PoeAdapter:
         except Exception:
             yield ("[DONE]")
 
+
+class claude2Adapter:
+    def __init__(self, cookie):
+        self.client = claude.Claude(cookie=cookie)
+
+    def convert_messages_to_prompt(self, messages):
+        return messages[len(messages)-1]["content"]
+
+    def openai_to_params(self, openai_params):
+        messages = openai_params["messages"]
+        prompt = self.convert_messages_to_prompt(messages)
+
+        return prompt
+
+    def chatgpt_response(self, content, model="gpt-3.5-turbo"):
+        length = len(content)
+        t = time.time()
+        return  {
+            "id": f"chatcmpl-{str(t)}",
+            "object": "chat.completion",
+            "created": int(t),
+            "model": model,
+            "usage": {
+                "completion_tokens": length,
+                "total_tokens": length,
+            },
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "index": 0,
+                }
+            ],
+        }
+    
+    async def chat(self, request: Request):
+        openai_params = await request.json()
+        prompt = self.openai_to_params(openai_params)
+        if openai_params.get("stream", False) == False:
+            yield ("[DONE]")
+        try:
+            response = self.client.get_answer(prompt)
+            lines = response.text.split('\n')
+
+            # Extract completion values from lines starting with 'data:'
+            completions = ''
+            for line in lines:
+                if line.startswith('data:'):
+                    json_str = line.replace('data:', '').strip()
+                    json_obj = json.loads(json_str)
+                    completion = json_obj.get('completion')
+                    if completion is None:
+                        continue
+                    r = self.chatgpt_response(completion, openai_params.get("model"))
+                    yield ( r )
+            yield ("[DONE]")
+        except Exception as e:
+            print(f"post claude2 failed: {e}")
+            yield ("[DONE]")
+
+
+# TBD
 class MerlinAdapter:
     chat="chat/merlin-actions?customJWT=true"
     status="status"

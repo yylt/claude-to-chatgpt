@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from claude_to_chatgpt.adapter import ClaudeAdapter, ClaudeSlackAdapter, PoeAdapter
+from claude_to_chatgpt.adapter import ClaudeAdapter, ClaudeSlackAdapter, PoeAdapter, claude2Adapter
 import json
 import os
 from claude_to_chatgpt.logger import logger
@@ -10,7 +10,7 @@ from claude_to_chatgpt.models import models_list
 
 CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", "https://api.anthropic.com")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", None)
-
+CLAUDE2_COOKIE = os.getenv("CLAUDE2_COOKIE", None)
 CLAUDE_SLACK_URL = os.getenv("CLAUDE_SLACK_URL", None)
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", None)
 SLACK_ACCESS_TOKEN = os.getenv("SLACK_ACCESS_TOKEN", None)
@@ -18,7 +18,7 @@ SLACK_ACCESS_TOKEN = os.getenv("SLACK_ACCESS_TOKEN", None)
 POE_TOKEN = os.getenv("POE_TOKEN", None)
 POE_PROXY = os.getenv("POE_PROXY", None)
 POE_GPT3_MODEL = os.getenv("POE_GPT3_MODEL", "chinchilla") 
-POE_GPT4_MODEL = os.getenv("POE_GPT4_MODEL", "a2") 
+POE_GPT4_MODEL = os.getenv("POE_GPT4_MODEL", "a2_2") 
 """
 {
   "capybara": "Sage",
@@ -41,6 +41,8 @@ if MODEL=="poe":
     adapter = PoeAdapter(POE_TOKEN, POE_PROXY, POE_GPT3_MODEL, POE_GPT4_MODEL)
 elif MODEL=="slack":
     adapter = ClaudeSlackAdapter(SLACK_CHANNEL,SLACK_ACCESS_TOKEN,CLAUDE_SLACK_URL)
+elif MODEL=="claude2":
+    adapter = claude2Adapter(CLAUDE2_COOKIE)
 else:
     adapter =  ClaudeAdapter(CLAUDE_API_KEY, CLAUDE_BASE_URL)
     
