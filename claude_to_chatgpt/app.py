@@ -73,10 +73,6 @@ async def chat(request: Request):
     if openai_params.get("stream", False):
         async def generate():
             async for response in adapter.chat(request):
-                #print("response: ",response)
-                if isinstance(response, str) and response.find("[DONE]")>-1:
-                    yield "data: [DONE]\n\n"
-                    break
                 yield f"data: {json.dumps(response)}\n\n"
         return StreamingResponse(generate(), media_type="text/event-stream")
     else:
@@ -86,7 +82,7 @@ async def chat(request: Request):
         return JSONResponse(content=openai_response)
 
 
-@app.route("/v1/models", methods=["GET"])
+@app.route("/v1/models", methods=["POST", "GET"])
 async def models(request: Request):
     # return a dict with key "object" and "data", "object" value is "list", "data" values is models list
     return JSONResponse(content={"object": "list", "data": models_list})

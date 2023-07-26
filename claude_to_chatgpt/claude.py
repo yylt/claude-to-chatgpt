@@ -94,7 +94,7 @@ class Client:
     payload = json.dumps({
       "completion": {
         "prompt": f"{prompt}",
-        "timezone": "Asia/Kolkata",
+        "timezone": "Asia/Shanghai",
         "model": "claude-2"
       },
       "organization_uuid": f"{self.organization_id}",
@@ -106,7 +106,7 @@ class Client:
     headers = {
       'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-      'Accept': 'text/event-stream, text/event-stream',
+      'Accept': 'text/event-stream',
       'Accept-Language': 'en-US,en;q=0.5',
       'Referer': 'https://claude.ai/chats',
       'Content-Type': 'application/json',
@@ -121,13 +121,23 @@ class Client:
     }
 
     response = requests.post(url, headers=headers, data=payload, stream=True)
-    decoded_data = response.content.decode("utf-8")
-    data = decoded_data.strip().split('\n')[-1]
+    return response
+    # for line in response.iter_lines():
+    #     if line.startswith(b'data:'):
+    #         # 解析data消息内容
+    #         json_line = json.loads(line[6:])
+    #         yield (line.content.decode("utf-8"))
+    #     elif line.startswith('event:'):  
+    #         continue 
+    #     else:
+    #         continue
+    # decoded_data = response.content.decode("utf-8")
+    # data = decoded_data.strip().split('\n')[-1]
 
-    answer = {"answer": json.loads(data[6:])['completion']}['answer']
+    # answer = {"answer": json.loads(data[6:])['completion']}['answer']
 
-    # Returns answer
-    return answer
+    # # Returns answer
+    # return answer
 
   # Deletes the conversation
   def delete_conversation(self, conversation_id):

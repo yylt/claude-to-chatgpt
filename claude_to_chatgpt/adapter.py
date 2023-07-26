@@ -227,10 +227,10 @@ class ClaudeSlackAdapter:
         return claude_params
 
     
-    def chatgpt_response(self, decoded_line, prev_decoded_line, model):
-        content = decoded_line.removeprefix(prev_decoded_line)
+    def chatgpt_response(self, decoded_line, prev_decoded_line, t, model):
+        content = decoded_line[len(prev_decoded_line):]
         length = len(content)
-        t=time.time()
+        
         return  {
             "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
@@ -254,6 +254,7 @@ class ClaudeSlackAdapter:
     async def chat(self, request: Request):
         openai_params = await request.json()
         claude_params = self.openai_to_claude_params(openai_params)
+        t=time.time()
         try:
             response = requests.post(
                     f"{self.claude_base_url}/backend-api/conversation",
@@ -262,39 +263,38 @@ class ClaudeSlackAdapter:
                         "content-type": "application/json",
                     },
                     json=claude_params,
-                    timeout=30,
+                    timeout=10,
                     stream=True,
                 )
             response.raise_for_status()
         except Exception as e:
-            print("exception: ",e)
-            yield ("[DONE]")
+            print("slack server failed: ",e)
+            yield ( finish(t,openai_params.get("model")) )
             return
 
         prev_decoded_line = ""
         for line in response.iter_lines():
             if not line or line is None:
                 continue
-            if line.startswith(b'event'):
+            if not line.startswith(b'data:'):
                 continue
             stripped_line = line.removeprefix(b'data: ')
             if not stripped_line:
                 continue
             if stripped_line.find(b'[DONE]')>-1:
-                yield ("[DONE]")
+                yield ( finish(t,openai_params.get("model")) )
                 break
             try:
                 json_line = json.loads(stripped_line)
                 decoded_line = json_line["message"]["content"]["parts"][0]
                 # yield decoded_line
-                openai_response = (self.chatgpt_response(decoded_line, prev_decoded_line, claude_params.get("model")))
+                openai_response = self.chatgpt_response(decoded_line, prev_decoded_line, t, claude_params.get("model"))
                 prev_decoded_line = decoded_line
-                yield openai_response
-            except json.JSONDecodeError as e:
-                print(
-                    f"Error decoding JSON: {e}"
-                ) 
-
+                yield ( openai_response )
+            except Exception as e:
+                print(f"req slack failed: {e}") 
+                yield ( finish(t,openai_params.get("model")) )
+                
 class PoeAdapter:
     def __init__(self, poe_token, proxy, model3, model4):
         self.client = poe.Client(poe_token, proxy=proxy)
@@ -310,10 +310,9 @@ class PoeAdapter:
 
         return prompt
 
-    def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
-        content = decoded_line.removeprefix(prev_decoded_line)
+    def chatgpt_response(self, decoded_line, prev_decoded_line, t, model="gpt-3.5-turbo"):
+        content = decoded_line[len(prev_decoded_line):]
         length = len(content)
-        t = time.time()
         return  {
             "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
@@ -337,8 +336,9 @@ class PoeAdapter:
     async def chat(self, request: Request):
         openai_params = await request.json()
         prompt = self.openai_to_poe_params(openai_params)
+        t = time.time()
         if openai_params.get("stream", False) == False:
-            yield ("[DONE]")
+            yield ( finish(t,openai_params.get("model")) )
         omodel = openai_params.get("model", "gpt-3.5-turbo")
         model = self.model3
         if omodel.startswith("gpt-4"):
@@ -347,13 +347,14 @@ class PoeAdapter:
             for resp in self.client.send_message(model, prompt, with_chat_break=True):
                 chunk = resp.get("text_new", None)
                 if chunk is None:
-                    yield ("[DONE]")
+                    yield ( finish(t,openai_params.get("model")) )
                     return 
-                r = self.chatgpt_response(chunk, "", openai_params.get("model"))
+                r = self.chatgpt_response(chunk, "", t, openai_params.get("model"))
                 yield ( r )
-            yield ("[DONE]")
-        except Exception:
-            yield ("[DONE]")
+            yield ( finish(t,openai_params.get("model")) )
+        except Exception as e:
+            print(f"req poe.com failed: {e}")
+            yield ( finish(t,openai_params.get("model")) )
 
 
 class claude2Adapter:
@@ -370,9 +371,9 @@ class claude2Adapter:
 
         return prompt
 
-    def chatgpt_response(self, content, model="gpt-3.5-turbo"):
+    def chatgpt_response(self, decoded_line, prev_decoded_line, t, model="gpt-3.5-turbo"):
+        content = decoded_line[len(prev_decoded_line):]
         length = len(content)
-        t = time.time()
         return  {
             "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
@@ -396,27 +397,25 @@ class claude2Adapter:
     async def chat(self, request: Request):
         openai_params = await request.json()
         prompt = self.openai_to_params(openai_params)
+        t = time.time()
         if openai_params.get("stream", False) == False:
-            yield ("[DONE]")
+            yield ( finish(t,openai_params.get("model")) )
         try:
+            pre_completion = ""
             response = self.client.send_message(prompt, self.conversation_id)
-            lines = response.text.split('\n')
-
-            # Extract completion values from lines starting with 'data:'
-            completions = ''
-            for line in lines:
-                if line.startswith('data:'):
-                    json_str = line.replace('data:', '').strip()
-                    json_obj = json.loads(json_str)
+            for line in response.iter_lines():
+                if line.startswith(b'data:'):
+                    json_obj = json.loads(line[6:])
                     completion = json_obj.get('completion')
                     if completion is None:
                         continue
-                    r = self.chatgpt_response(completion, openai_params.get("model"))
+                    #print(f"pre_comp: {pre_completion}, all_comp: {completion}")
+                    r = self.chatgpt_response(completion,pre_completion,t, openai_params.get("model"))
                     yield ( r )
-            yield ("[DONE]")
+            yield ( finish(t,openai_params.get("model")) )
         except Exception as e:
-            print(f"post claude2 failed: {e}")
-            yield ("[DONE]")
+            print(f"req claude2 failed: {e}")
+            yield ( finish(t,openai_params.get("model")) )
 
 
 # TBD
@@ -436,10 +435,10 @@ class MerlinAdapter:
 
         return prompt
 
-    def chatgpt_response(self, decoded_line, prev_decoded_line,model="gpt-3.5-turbo"):
+    def chatgpt_response(self, decoded_line, prev_decoded_line, t, model="gpt-3.5-turbo"):
         content = decoded_line.removeprefix(prev_decoded_line)
         length = len(content)
-        t = time.time()
+        
         return  {
             "id": f"chatcmpl-{str(t)}",
             "object": "chat.completion",
@@ -463,15 +462,29 @@ class MerlinAdapter:
     async def chat(self, request: Request):
         openai_params = await request.json()
         prompt = self.openai_to_poe_params(openai_params)
+        t = time.time()
         if openai_params.get("stream", False)==False:
-            yield ("[DONE]")
+            yield ( finish(t,openai_params.get("model")) )
         for resp in self.client.send_message(self.model, prompt, with_chat_break=True):
             chunk = resp.get("text_new", None)
             if chunk is None:
-                yield ("[DONE]")
+                yield ( finish(t,openai_params.get("model")) )
                 return 
-            r = self.chatgpt_response(chunk, "", openai_params.get("model"))
+            r = self.chatgpt_response(chunk, "", t, openai_params.get("model"))
             yield ( r )
-        yield ("[DONE]")
+        yield ( finish(t,openai_params.get("model")) )
 
 
+def finish(t,model):
+    return {
+        "id": f"chatcmpl-{str(t)}",
+        "object": "chat.completion",
+        "created": int(t),
+        "model": model,
+        "choices": [
+            {
+                "finish_reason": "done",
+                "index": 0,
+            }
+        ],
+    }
