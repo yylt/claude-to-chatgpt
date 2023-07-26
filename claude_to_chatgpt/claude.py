@@ -4,168 +4,285 @@ import os
 import uuid
 
 
-class Claude:
+class Client:
 
+  def __init__(self, cookie, organization):
+    self.cookie = cookie
+    if organization is not None:
+        self.organization_id = organization
+    else:
+        self.organization_id = self.get_organization_id()
 
-    def __init__(self, cookie) -> None:
-        self.cookies=cookie
-        self.organisation_uuid=self.get_organisation_uuid()
-        self.conversation_uuid=''
-        self.get_conversation_uuid()
+  def get_organization_id(self):
+    url = "https://claude.ai/api/organizations"
 
-    def get_organisation_uuid(self):
-        uuid=''
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://claude.ai/chats',
+        'Content-Type': 'application/json',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}'
+    }
 
-        url = 'https://claude.ai/api/organizations'
+    response = requests.request("GET", url, headers=headers)
+    res = json.loads(response.text)
+    uuid = res[0]['uuid']
 
-        headers = {
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'Content-Type': 'application/json',
-            'Cookie': f'{self.cookies}',
-            'Referer': 'https://claude.ai/chat/3327f77b-fc2f-4ff3-bf28-2f5ca7e4e84c',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        }
+    return uuid
 
-        response = requests.get(url, headers=headers)
+  def get_content_type(self, file_path):
+    # Function to determine content type based on file extension
+    extension = os.path.splitext(file_path)[-1].lower()
+    if extension == '.pdf':
+      return 'application/pdf'
+    elif extension == '.txt':
+      return 'text/plain'
+    elif extension == '.csv':
+      return 'text/csv'
+    # Add more content types as needed for other file types
+    else:
+      return 'application/octet-stream'
 
-        if response.status_code == 200:
-            data = response.json()
-            uuid=data[0]['uuid']
+  # Lists all the conversations you had with Claude
+  def list_all_conversations(self):
+    url = f"https://claude.ai/api/organizations/{self.organization_id}/chat_conversations"
 
-            # Process the response data and analyze the chatbot's API behavior
-            # Extract relevant information from the data and observe any patterns
-        else:
-            # Handle the case when the request is not successful
-            print('Request failed with status code:', response.status_code)
-            print('Please check the cookies you have entered.')
-            print('If they are correct then Claude might be down')
-        
-        return uuid
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://claude.ai/chats',
+        'Content-Type': 'application/json',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}'
+    }
+
+    response = requests.get(url, headers=headers)
+    conversations = response.json()
+
+    # Returns all conversation information in a list
+    if response.status_code == 200:
+      return conversations
+    else:
+      print(f"Error: {response.status_code} - {response.text}")
+
+  # Send Message to Claude
+  def send_message(self, prompt, conversation_id, attachment=None):
+    url = "https://claude.ai/api/append_message"
+
+    # Upload attachment if provided
+    attachments = []
+    if attachment:
+      attachment_response = self.upload_attachment(attachment)
+      if attachment_response:
+        attachments = [attachment_response]
+      else:
+        return {"Error: Invalid file format. Please try again."}
+
+    # Ensure attachments is an empty list when no attachment is provided
+    if not attachment:
+      attachments = []
+
+    payload = json.dumps({
+      "completion": {
+        "prompt": f"{prompt}",
+        "timezone": "Asia/Kolkata",
+        "model": "claude-2"
+      },
+      "organization_uuid": f"{self.organization_id}",
+      "conversation_uuid": f"{conversation_id}",
+      "text": f"{prompt}",
+      "attachments": attachments
+    })
+
+    headers = {
+      'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+      'Accept': 'text/event-stream, text/event-stream',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Referer': 'https://claude.ai/chats',
+      'Content-Type': 'application/json',
+      'Origin': 'https://claude.ai',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Cookie': f'{self.cookie}',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'TE': 'trailers'
+    }
+
+    response = requests.post(url, headers=headers, data=payload, stream=True)
+    decoded_data = response.content.decode("utf-8")
+    data = decoded_data.strip().split('\n')[-1]
+
+    answer = {"answer": json.loads(data[6:])['completion']}['answer']
+
+    # Returns answer
+    return answer
+
+  # Deletes the conversation
+  def delete_conversation(self, conversation_id):
+    url = f"https://claude.ai/api/organizations/{self.organization_id}/chat_conversations/{conversation_id}"
+
+    payload = json.dumps(f"{conversation_id}")
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Content-Type': 'application/json',
+        'Content-Length': '38',
+        'Referer': 'https://claude.ai/chats',
+        'Origin': 'https://claude.ai',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}',
+        'TE': 'trailers'
+    }
+
+    response = requests.request("DELETE", url, headers=headers, data=payload)
+
+    # Returns True if deleted or False if any error in deleting
+    if response.status_code == 204:
+      return True
+    else:
+      return False
+
+  # Returns all the messages in conversation
+  def chat_conversation_history(self, conversation_id):
+    url = f"https://claude.ai/api/organizations/{self.organization_id}/chat_conversations/{conversation_id}"
+
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://claude.ai/chats',
+        'Content-Type': 'application/json',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}'
+    }
+
+    response = requests.request("GET", url, headers=headers)
+    print(type(response))
+
+    # List all the conversations in JSON
+    return response.json()
+
+  def generate_uuid(self):
+    random_uuid = uuid.uuid4()
+    random_uuid_str = str(random_uuid)
+    formatted_uuid = f"{random_uuid_str[0:8]}-{random_uuid_str[9:13]}-{random_uuid_str[14:18]}-{random_uuid_str[19:23]}-{random_uuid_str[24:]}"
+    return formatted_uuid
+
+  def create_new_chat(self):
+    url = f"https://claude.ai/api/organizations/{self.organization_id}/chat_conversations"
+    uuid = self.generate_uuid()
+
+    payload = json.dumps({"uuid": uuid, "name": ""})
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://claude.ai/chats',
+        'Content-Type': 'application/json',
+        'Origin': 'https://claude.ai',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Cookie': self.cookie,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'TE': 'trailers'
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    # Returns JSON of the newly created conversation information
+    return response.json()
+
+  # Resets all the conversations
+  def reset_all(self):
+    conversations = self.list_all_conversations()
+
+    for conversation in conversations:
+      conversation_id = conversation['uuid']
+      delete_id = self.delete_conversation(conversation_id)
+
+    return True
+
+  def upload_attachment(self, file_path):
+    url = 'https://claude.ai/api/convert_document'
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://claude.ai/chats',
+        'Origin': 'https://claude.ai',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}',
+        'TE': 'trailers'
+    }
+
+    file_name = os.path.basename(file_path)
+    content_type = self.get_content_type(file_path)
+
+    files = {
+        'file': (file_name, open(file_path, 'rb'), content_type),
+        'orgUuid': (None, self.organization_id)
+    }
+
+    response = requests.post(url, headers=headers, files=files)
+    if response.status_code == 200:
+      return response.json()
+    else:
+      return False
+      
+
     
+  # Renames the chat conversation title
+  def rename_chat(self, title, conversation_id):
+    url = "https://claude.ai/api/rename_chat"
 
-    def get_random_uuid(self) -> str:
+    payload = json.dumps({
+        "organization_uuid": f"{self.organization_id}",
+        "conversation_uuid": f"{conversation_id}",
+        "title": f"{title}"
+    })
+    headers = {
+        'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Content-Type': 'application/json',
+        'Referer': 'https://claude.ai/chats',
+        'Origin': 'https://claude.ai',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+        'Cookie': f'{self.cookie}',
+        'TE': 'trailers'
+    }
 
-        random_uuid=uuid.uuid4()
-        new_uuid=str(random_uuid)
-        return new_uuid
-    
-    def get_conversation_uuid(self):
+    response = requests.request("POST", url, headers=headers, data=payload)
 
-        url = f'https://claude.ai/api/organizations/{self.organisation_uuid}/chat_conversations'
-
-        headers = {
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'Content-Type': 'application/json',
-            'Cookie': f'{self.cookies}',
-            'Referer': 'https://claude.ai/chat/3327f77b-fc2f-4ff3-bf28-2f5ca7e4e84c',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        }
-
-        response = requests.get(url, headers=headers)
-
-        if response.status_code == 200:
-            conversation_history = response.json()
-            if(conversation_history==[]):
-                print('No old conversations, creating a new one')
-                self.create_new_conversation()
-                
-            else:
-                print('Found old conversations, using the most recent one')
-                most_receent_conversation=conversation_history[-1]
-                self.conversation_uuid=most_receent_conversation['uuid']
-                
-                
-            
-
-            # Process the response data and analyze the chatbot's API behavior
-            # Extract relevant information from the data and observe any patterns
-        else:
-            # Handle the case when the request is not successful
-            print('Request failed with status code:', response.status_code)
-            print('Please check the cookies you have entered.')
-            print('If they are correct then Claude might be down')
-        
-        return
-
-        
-
-    
-    def create_new_conversation(self) -> None:
-
-        url = f"https://claude.ai/api/organizations/{self.organisation_uuid}/chat_conversations"
-        conversation_uuid = self.get_random_uuid()
-
-        headers = {
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'Content-Type': 'application/json',
-            'Cookie': f'{self.cookies}',
-            'Referer': 'https://claude.ai/chat/3327f77b-fc2f-4ff3-bf28-2f5ca7e4e84c',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        }
-
-        payload= json.dumps({"uuid": conversation_uuid, "name": ""})
-
-        response = requests.post(url,data=payload, headers=headers)
-
-        if response.status_code == 201:
-            data=response.json()
-
-            self.conversation_uuid= data['uuid']
-            print('New Conversation Created')
-            
-
-            
-        
-        else:
-            print('Request failed with status code:', response.status_code)
-            print('Unable to create a new conversation please try again')
-
-        
-    
-    def get_answer(self,prompt,timeout=30):
-
-        url='https://claude.ai/api/append_message'
-
-        payload=json.dumps({'attachments': [],
-                    'completion': { 'incremental': 'true',
-                    'model': "claude-2",
-                    'prompt': f'{prompt}',
-                    'timezone': "Asia/Singapore"},
-                    'conversation_uuid': "755dc0ba-14ca-4804-8315-13c01729096c",
-                    'organization_uuid': "4c807c28-09f4-4304-acbe-ac5554c59973",
-                    'text': f'{prompt}'})
-        
-        headers = {
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'Content-Type': 'application/json',
-            'Cookie': f'{self.cookies}',
-            'Referer': 'https://claude.ai/chat/3327f77b-fc2f-4ff3-bf28-2f5ca7e4e84c',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        }
-
-        return requests.post(url, headers=headers, data=payload, timeout=timeout)
-
-        lines = response.text.split('\n')
-
-        # Extract completion values from lines starting with 'data:'
-        completions = ''
-        for line in lines:
-            if line.startswith('data:'):
-                json_str = line.replace('data:', '').strip()
-                json_obj = json.loads(json_str)
-                completion = json_obj.get('completion')
-                if completion is not None:
-                    completions+=completion
-
-        # Print the extracted completion values
-        # print(completions)
-        return completions
-
+    if response.status_code == 200:
+      return True
+    else:
+      return False
+      

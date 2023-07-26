@@ -357,8 +357,9 @@ class PoeAdapter:
 
 
 class claude2Adapter:
-    def __init__(self, cookie):
-        self.client = claude.Claude(cookie=cookie)
+    def __init__(self, cookie, chatid, orgid=None):
+        self.client = claude.Client(cookie=cookie,organization=orgid)
+        self.conversation_id = chatid
 
     def convert_messages_to_prompt(self, messages):
         return messages[len(messages)-1]["content"]
@@ -398,7 +399,7 @@ class claude2Adapter:
         if openai_params.get("stream", False) == False:
             yield ("[DONE]")
         try:
-            response = self.client.get_answer(prompt)
+            response = self.client.send_message(prompt, self.conversation_id)
             lines = response.text.split('\n')
 
             # Extract completion values from lines starting with 'data:'

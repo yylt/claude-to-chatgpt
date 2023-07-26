@@ -11,6 +11,9 @@ from claude_to_chatgpt.models import models_list
 CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", "https://api.anthropic.com")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", None)
 CLAUDE2_COOKIE = os.getenv("CLAUDE2_COOKIE", None)
+CLAUDE2_CHATID = os.getenv("CLAUDE2_CHATID", None)
+CLAUDE2_ORGID = os.getenv("CLAUDE2_ORGID", None)
+
 CLAUDE_SLACK_URL = os.getenv("CLAUDE_SLACK_URL", None)
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", None)
 SLACK_ACCESS_TOKEN = os.getenv("SLACK_ACCESS_TOKEN", None)
@@ -42,7 +45,7 @@ if MODEL=="poe":
 elif MODEL=="slack":
     adapter = ClaudeSlackAdapter(SLACK_CHANNEL,SLACK_ACCESS_TOKEN,CLAUDE_SLACK_URL)
 elif MODEL=="claude2":
-    adapter = claude2Adapter(CLAUDE2_COOKIE)
+    adapter = claude2Adapter(CLAUDE2_COOKIE, CLAUDE2_CHATID, CLAUDE2_ORGID)
 else:
     adapter =  ClaudeAdapter(CLAUDE_API_KEY, CLAUDE_BASE_URL)
     
