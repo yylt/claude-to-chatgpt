@@ -402,15 +402,19 @@ class claude2Adapter:
             yield ( finish(t,openai_params.get("model")) )
         try:
             pre_completion = ""
-            response = self.client.send_message(prompt, self.conversation_id)
-            for line in response.iter_lines():
-                if line.startswith(b'data:'):
-                    json_obj = json.loads(line[6:])
-                    completion = json_obj.get('completion')
-                    if completion is None:
-                        continue
-                    #print(f"pre_comp: {pre_completion}, all_comp: {completion}")
-                    r = self.chatgpt_response(completion,pre_completion,t, openai_params.get("model"))
+            # response = self.client.send_message(prompt, self.conversation_id)
+            # print(f"prompt: {prompt}, response: {response}")
+            
+            # for line in response.iter_lines():
+            async for line in self.client.send_message(prompt, self.conversation_id):
+                # print(f"prompt: {prompt}, response: {line}")
+                # if line.startswith(b'data:'):
+                #     json_obj = json.loads(line[6:])
+                #     completion = json_obj.get('completion')
+                #     if completion is None:
+                #         continue
+                for completion in line:                    
+                    r = self.chatgpt_response(completion, pre_completion,t, openai_params.get("model"))
                     yield ( r )
             yield ( finish(t,openai_params.get("model")) )
         except Exception as e:
